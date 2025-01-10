@@ -1,7 +1,12 @@
 #include "core/graph.h"
+#include "core/blob.h"
+#include "core/object.h"
+#include "core/ref.h"
+#include "core/runtime.h"
 #include <algorithm>
-#include <numeric>
-#include <queue>
+#include <cstdio>
+#include <unordered_map>
+#include <utility>
 
 namespace infini {
 
@@ -126,14 +131,65 @@ void GraphObj::dataMalloc() {
     // topological sorting first
     IT_ASSERT(topo_sort() == true);
 
-    // =================================== 作业
-    // ===================================
-    // TODO：利用 allocator 给计算图分配内存
-    // HINT: 获取分配好的内存指针后，可以调用 tensor 的 setDataBlob 函数给
-    // tensor 绑定内存
-    // =================================== 作业
-    // ===================================
+    // consider this example computation graph:
+    // t1 (op-x) t2 (op-y) t3 (op-z) t4 (op-w) t5
+    //
+    // 1. run op-x, active [t1 t2] (alloc t1 t2)
+    // 2. run op-y, active [t2 t3] (free t1, alloc t3)
+    // 3. run op-z, active [t3 t4] (free t2, alloc t4)
+    // 4. run op-w, active [t4 t5] (free t3, alloc t5)
 
+    std::unordered_map<TensorObj *, size_t> ref;
+    std::unordered_map<TensorObj *, size_t> off;
+#if 1
+    // all input tensors have to be allocated
+    for (const auto &in : getInputs()) {
+        off[in.get()] = allocator.alloc(in->getBytes());
+    }
+
+    // in/out degree counting
+    for (const auto &op : ops) {
+        for (auto &in : op->getInputs()) {
+            ref[in.get()]++;
+        }
+    }
+
+    // membership testing
+    const auto mem = [](const auto &set, const auto &x) {
+        return set.find(x) != set.end();
+    };
+
+    // execute kernels in topological order
+    for (const auto &op : ops) {
+        // allocate if need
+        for (auto &out : op->getOutputs()) {
+            const auto outPtr = out.get();
+            if (!mem(off, outPtr)) {
+                off[outPtr] = allocator.alloc(out->getBytes());
+            }
+        }
+        // deallocate if ref count = 0
+        for (auto &in : op->getInputs()) {
+            const auto inPtr = in.get();
+            ref[inPtr]--;
+            if (ref[inPtr] == 0) {
+                allocator.free(off[inPtr], in->getBytes());
+            }
+        }
+    }
+#else
+    for (auto &t : getTensors()) {
+        off[t.get()] = allocator.alloc(t->getBytes());
+    }
+#endif
+
+    // add offset to pool pointer
+    for (auto &t : getTensors()) {
+        auto ptr = reinterpret_cast<char *>(allocator.getPtr());
+        t->setDataBlob(make_ref<BlobObj>(runtime, ptr + off[t.get()]));
+    }
+
+    // print memory usage
     allocator.info();
 }
 

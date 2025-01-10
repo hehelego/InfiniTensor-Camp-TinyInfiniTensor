@@ -1,5 +1,4 @@
 #include "core/allocator.h"
-#include <utility>
 
 namespace infini {
 Allocator::Allocator(Runtime runtime) : runtime(runtime) {
@@ -24,30 +23,62 @@ size_t Allocator::alloc(size_t size) {
     // pad the size to the multiple of alignment
     size = this->getAlignedSize(size);
 
-    // =================================== 作业
-    // ===================================
-    // TODO: 设计一个算法来分配内存，返回起始地址偏移量
-    // =================================== 作业
-    // ===================================
+    used += size;
 
-    return 0;
+    size_t pos = 0;
+
+    // the first (smallest) block whose size is greater or equal to size
+    // v[i]=(pos, sz) < (0, k) := (sz /= k and sz < k) or (sz = k and pos < 0)
+    // v[i]=(pos, sz) < (0, k) := sz < k
+    // v[i]=(pos, sz) >= (0, k) := sz >= k
+    auto i = frees.lower_bound(Block{0, size});
+    if (i != frees.end()) {
+        auto blk = *i;
+        pos = blk.begin;
+        frees.erase(i);
+
+        // still got some space available
+        if (blk.size < size) {
+            blk.begin += size;
+            blk.size -= size;
+            frees.insert(blk);
+        }
+
+    } else if (!frees.empty()) {
+        // extend the last free block
+        auto k = frees.begin();
+        for (auto i = frees.begin(); i != frees.end(); i++) {
+            if (k->begin < i->begin) {
+                k = i;
+            }
+        }
+        const auto blk = *k;
+        frees.erase(k);
+        pos = blk.begin;
+
+        peak = std::max(peak, pos + size - blk.size);
+    } else {
+        // cannot fit in a free block
+        // so we allocate a separate consecutive block
+        pos = peak;
+        peak += size;
+    }
+
+    return pos;
 }
 
 void Allocator::free(size_t addr, size_t size) {
     IT_ASSERT(this->ptr == nullptr);
     size = getAlignedSize(size);
 
-    // =================================== 作业
-    // ===================================
-    // TODO: 设计一个算法来回收内存
-    // =================================== 作业
-    // ===================================
+    used -= size;
+
+    frees.insert(Block{addr, size});
 }
 
 void *Allocator::getPtr() {
     if (this->ptr == nullptr) {
         this->ptr = runtime->alloc(this->peak);
-        printf("Allocator really alloc: %p %lu bytes\n", this->ptr, peak);
     }
     return this->ptr;
 }
