@@ -1,18 +1,26 @@
 #include "utils/operator_utils.h"
 #include "core/runtime.h"
+#include "core/tensor.h"
+#include <algorithm>
 
 namespace infini {
 
 Shape infer_broadcast(const Shape &A, const Shape &B) {
+    // https://github.com/onnx/onnx/blob/main/docs/Broadcasting.md
+    // 1. exactly the same shape.
+    // 2. same rank AND (n:n OR 1:n in every dimension)
+    // 3. [1,1,1 ... A] <=> B
 
-    // =================================== 作业
-    // ===================================
-    // TODO：对 A 和 B 进行双向广播，返回广播后的形状。
-    // REF: https://github.com/onnx/onnx/blob/main/docs/Broadcasting.md
-    // =================================== 作业
-    // ===================================
-
-    return {};
+    auto n = std::max(A.size(), B.size());
+    auto padA = n - A.size();
+    auto padB = n - B.size();
+    Shape shape(n);
+    for (size_t i = 0; i < n; i++) {
+        auto la = i < padA ? 1 : A[i - padA];
+        auto lb = i < padB ? 1 : B[i - padB];
+        shape[i] = std::max(la, lb);
+    }
+    return shape;
 }
 
 int get_real_axis(const int &axis, const int &rank) {

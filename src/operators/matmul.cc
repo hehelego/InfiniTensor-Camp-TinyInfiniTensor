@@ -1,4 +1,7 @@
 #include "operators/matmul.h"
+#include "core/common.h"
+#include <cstdio>
+#include <utility>
 
 namespace infini {
 
@@ -19,13 +22,20 @@ string MatmulObj::toString() const {
 }
 
 optional<vector<Shape>> MatmulObj::inferShape(const TensorVec &inputs) {
-    // =================================== 作业
-    // ===================================
-    // TODO：返回经过 matmul 操作后的 shape
-    // REF: https://github.com/onnx/onnx/blob/main/docs/Operators.md#gemm
-    // =================================== 作业
-    // ===================================
-    return std::nullopt;
+    auto sa = inputs[0]->getDims(), sb = inputs[1]->getDims();
+    auto rank = sa.size(), _0 = rank - 1, _1 = rank - 2;
+    // m n k
+    m = transA ? sa[_0] : sa[_1];
+    n = transA ? sa[_1] : sa[_0];
+    k = transB ? sb[_1] : sb[_0];
+    Shape shape(sa.size());
+    // GEMM dimensions: (m,n) x (n,k) = (m,k)
+    shape[_0] = k, shape[_1] = m;
+    // broadcasting
+    for (size_t i = 0; i < _1; i++) {
+        shape[i] = std::max(sa[i], sb[i]);
+    }
+    return optional{vector<Shape>{shape}};
 }
 
 } // namespace infini
