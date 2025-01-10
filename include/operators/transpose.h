@@ -1,14 +1,12 @@
 #pragma once
 #include "core/operator.h"
 
-namespace infini
-{
-  /**
-   * @brief Transpose the input tensor similar to numpy.transpose.
-   *
-   */
-  class TransposeObj : public OperatorObj
-  {
+namespace infini {
+/**
+ * @brief Transpose the input tensor similar to numpy.transpose.
+ *
+ */
+class TransposeObj : public OperatorObj {
   public:
     /**
      * @brief Construct a new TransposeObj object.
@@ -30,5 +28,5 @@ namespace infini
 
   private:
     vector<int> transposePermute;
-  };
+};
 } // namespace infini

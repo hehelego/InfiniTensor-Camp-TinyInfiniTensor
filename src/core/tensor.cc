@@ -7,32 +7,33 @@
 
 namespace infini {
 
-    TensorObj::TensorObj(Shape shape_, DataType dtype, Runtime runtime)
-        : dim(shape_.size()), dtype(dtype), runtime(runtime), shape(std::move(shape_)),
-          _size(std::accumulate(shape.begin(), shape.end(), 1, std::multiplies{})) {}
+TensorObj::TensorObj(Shape shape_, DataType dtype, Runtime runtime)
+    : dim(shape_.size()), dtype(dtype), runtime(runtime),
+      shape(std::move(shape_)),
+      _size(std::accumulate(shape.begin(), shape.end(), 1, std::multiplies{})) {
+}
 
-    string TensorObj::toString() const
-    {
-        // Convert data pointer to string
-        std::stringstream ss;
-        if (data != nullptr)
-            ss << data->getPtr<void *>();
-        else
-            ss << "nullptr data";
-        string ret = "Tensor " + std::to_string(guid) + ", Fuid " +
-                     std::to_string(fuid) + ", shape " + vecToString(shape) +
-                     ", dtype " + dtype.toString() + ", " + runtime->toString() +
-                     ", " + ss.str() + "\n";
-        vector<UidBaseType> targetGuids;
-        for (const auto &op : targets)
-            targetGuids.emplace_back(op.lock()->getGuid());
-        if (auto o = source.lock())
-            ret += ", source " + std::to_string(o->getGuid());
-        else
-            ret += ", source None";
-        ret += ", targets " + vecToString(targetGuids);
-        return ret;
-    }
+string TensorObj::toString() const {
+    // Convert data pointer to string
+    std::stringstream ss;
+    if (data != nullptr)
+        ss << data->getPtr<void *>();
+    else
+        ss << "nullptr data";
+    string ret = "Tensor " + std::to_string(guid) + ", Fuid " +
+                 std::to_string(fuid) + ", shape " + vecToString(shape) +
+                 ", dtype " + dtype.toString() + ", " + runtime->toString() +
+                 ", " + ss.str() + "\n";
+    vector<UidBaseType> targetGuids;
+    for (const auto &op : targets)
+        targetGuids.emplace_back(op.lock()->getGuid());
+    if (auto o = source.lock())
+        ret += ", source " + std::to_string(o->getGuid());
+    else
+        ret += ", source None";
+    ret += ", targets " + vecToString(targetGuids);
+    return ret;
+}
 
 void TensorObj::setShape(Shape shape_) {
     shape = shape_;

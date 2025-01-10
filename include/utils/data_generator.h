@@ -9,7 +9,7 @@ class DataGenerator {
     virtual void fill(uint32_t *data, size_t size) { IT_TODO_HALT(); }
     virtual void fill(float *data, size_t size) { IT_TODO_HALT(); }
 
-public:
+  public:
     virtual ~DataGenerator() {}
     void operator()(void *data, size_t size, DataType dataType) {
         if (dataType == DataType::UInt32)
