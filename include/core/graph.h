@@ -25,8 +25,29 @@ class GraphObj : public Object {
     TensorVec addTensor(const TensorVec &tensors);
     void removeOperator(Operator op) {
         auto it = std::find(ops.begin(), ops.end(), op);
-        if (it != ops.end())
-            ops.erase(it);
+        if (it == ops.end())
+            return;
+        ops.erase(it);
+        for (auto &input : op->getInputs()) {
+            if (input) {
+                input->removeTarget(op);
+                if (auto pred = input->getSource()) {
+                    pred->removeSuccessors(op);
+                    op->removePredecessors(pred);
+                }
+            }
+        }
+        for (auto &output : op->getOutputs()) {
+            if (output) {
+                // NOTE: need to change the source if the tensor buffer
+                // will be used in the future.
+                output->setSource(nullptr);
+                for (auto &succ : output->getTargets()) {
+                    succ->removePredecessors(op);
+                    op->removeSuccessors(succ);
+                }
+            }
+        }
     }
 
     void removeTensor(Tensor tensor) {
@@ -42,8 +63,8 @@ class GraphObj : public Object {
     /**
      * @brief Sort the nodes in topological order.
      * It returns true if the sorting is successful.
-     * Otherwise false is returned, means that there are rings in the graph,
-     * so the topological sorting fails.
+     * Otherwise false is returned, means that there are rings in the
+     * graph, so the topological sorting fails.
      */
     bool topo_sort();
 
@@ -54,8 +75,8 @@ class GraphObj : public Object {
     void dataMalloc();
 
     /**
-     * @brief Add an operator and create its outputs. Output tensor arguments
-     * should be empty Refs (e.g., nullptr).
+     * @brief Add an operator and create its outputs. Output tensor
+     * arguments should be empty Refs (e.g., nullptr).
      */
     template <typename T, typename... Args> Ref<T> addOp(Args &&...args) {
         Ref<T> op = infini::make_ref<T>(this, std::forward<Args>(args)...);

@@ -1,10 +1,16 @@
 #include "core/graph.h"
 #include "core/blob.h"
+#include "core/common.h"
 #include "core/object.h"
+#include "core/op_type.h"
 #include "core/ref.h"
 #include "core/runtime.h"
+#include "core/tensor.h"
+#include "operators/matmul.h"
+#include "operators/transpose.h"
 #include <algorithm>
 #include <cstdio>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 
@@ -86,17 +92,159 @@ bool GraphObj::topo_sort() {
     return this->sorted = true;
 }
 
+static vector<int> permCompose(const vector<int> p, const vector<int> q) {
+    auto n = p.size();
+    vector<int> r(n);
+    for (auto i = 0u; i < n; i++) {
+        r[i] = q[p[i]];
+    }
+    return r;
+}
+static bool isMatTrans(const vector<int> p) {
+    int n = p.size();
+    if (n < 2)
+        return false;
+    for (auto i = 0; i + 2 < n; i++)
+        if (p[i] != i)
+            return false;
+    return p[n - 1] == n - 2 && p[n - 2] == n - 1;
+}
+static bool isIdentity(const vector<int> p) {
+    int n = p.size();
+    for (auto i = 0; i < n; i++)
+        if (p[i] != i)
+            return false;
+    return true;
+}
+
 void GraphObj::optimize() {
-    // =================================== 作业
-    // ===================================
-    // TODO: 设计一个算法来实现指定的图优化规则
-    // 图优化规则如下：
-    // 1. 去除冗余的算子（例如，两个相邻的算子都是 transpose
-    // 算子，且做的是相反的操作，可以将其全部删除）
-    // 2.
-    // 合并算子（例如，矩阵乘算子中含有属性transA、transB，如果其输入存在transpose，且对最后两个维度做交换，就可以将transpose融入到矩阵乘算子的属性中去）
-    // =================================== 作业
-    // ===================================
+    // 1. 去除冗余的算子
+    // eg two consecutive cancellable transpose -> none
+    // 2. 合并算子 eg transpose + matmul transA transB
+    bool modified = true;
+    do {
+        modified = false;
+        // rule 1: fuse two transposes
+        for (auto op : ops) {
+            if (op->getOpType() == OpType::Transpose) {
+                const auto &succVec = op->getSuccessors();
+                const bool trAll =
+                    std::all_of(succVec.begin(), succVec.end(), [](auto x) {
+                        return x->getOpType() == OpType::Transpose;
+                    });
+                auto p = dynamic_cast<TransposeObj *>(op.get())->getPermute();
+                if (!succVec.empty() && trAll) {
+                    modified = true;
+
+                    for (auto &suc : succVec) {
+                        auto in = op->getInputs(0), out = suc->getOutput();
+                        auto q = dynamic_cast<TransposeObj *>(suc.get())
+                                     ->getPermute();
+                        // add a new fused operator
+                        auto fusedOp = addOpWithOutputs<TransposeObj>(
+                            in, out, permCompose(p, q));
+                        // detach the suc operator
+                        removeOperator(suc);
+                        // NOTE: correct source
+                        out->setSource(fusedOp);
+                    }
+                    // the output buffer will nolonger be used
+                    removeTensor(op->getOutput());
+                    // finally remove this
+                    removeOperator(op);
+
+                    print();
+                    break;
+                }
+            }
+        }
+        if (modified)
+            continue;
+
+        // rule 2: fuse transposes with GEMM
+        for (auto op : ops) {
+            if (op->getOpType() == OpType::Transpose) {
+                auto perm =
+                    dynamic_cast<TransposeObj *>(op.get())->getPermute();
+                const auto &succVec = op->getSuccessors();
+                const bool matmulAll =
+                    std::all_of(succVec.begin(), succVec.end(), [](auto x) {
+                        return x->getOpType() == OpType::MatMul;
+                    });
+                if (isMatTrans(perm) && !succVec.empty() && matmulAll) {
+                    modified = true;
+
+                    for (auto &suc : succVec) {
+                        auto in = op->getInputs(0), out = suc->getOutput();
+                        auto mmOp = dynamic_cast<MatmulObj *>(suc.get());
+
+                        std::shared_ptr<MatmulObj> fusedOp = nullptr;
+                        // A*B op=A
+                        if (suc->getInputs(0) == op->getOutput()) {
+                            auto fusedOp = addOpWithOutputs<MatmulObj>(
+                                in, mmOp->getInputs(1), out,
+                                // transpose
+                                !mmOp->getTransA(), mmOp->getTransB());
+                        }
+                        // A*B op=B
+                        else {
+                            fusedOp = addOpWithOutputs<MatmulObj>(
+                                mmOp->getInputs(0), in, out,
+                                // transpose
+                                mmOp->getTransA(), !mmOp->getTransB());
+                        }
+                        // detach the suc operator
+                        removeOperator(suc);
+                        // NOTE: correct source
+                        out->setSource(fusedOp);
+                    }
+                    // the output buffer will nolonger be used
+                    removeTensor(op->getOutput());
+                    // finally remove this
+                    removeOperator(op);
+
+                    print();
+                    break;
+                }
+            }
+        }
+        if (modified)
+            continue;
+
+        // rule 3: eliminate transposes with GEMM
+        for (auto op : ops) {
+            if (op->getOpType() == OpType::Transpose) {
+                auto perm =
+                    dynamic_cast<TransposeObj *>(op.get())->getPermute();
+                if (isIdentity(perm)) {
+                    modified = true;
+
+                    // (buf) -- id -- (out) -> [op1, op2, op3]
+                    // (buf) -> [op1, op2, op3]
+                    const auto in = op->getInputs(0);
+                    const auto out = op->getOutput();
+                    in->removeTarget(op);
+
+                    const auto &succVec = op->getSuccessors();
+                    for (auto &suc : succVec) {
+                        in->addTarget(suc);
+                        suc->removePredecessors(op);
+
+                        *std::find(suc->inputs.begin(), suc->inputs.end(),
+                                   out) = in;
+                    }
+                    // the output buffer will nolonger be used
+                    removeTensor(op->getOutput());
+                    // finally remove this
+                    removeOperator(op);
+                    break;
+                }
+            }
+        }
+        if (modified)
+            continue;
+
+    } while (modified);
 }
 
 Tensor GraphObj::getTensor(int fuid) const {
